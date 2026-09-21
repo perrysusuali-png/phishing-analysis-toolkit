@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% set verdict_class = {
+    "HIGH RISK": "stamp-high",
+    "SUSPICIOUS": "stamp-medium",
+    "LOW RISK": "stamp-low",
+    "NO INDICATORS FOUND": "stamp-clean"
+} %}
+
+<a href="{{ url_for('index') }}" class="back-link">&larr; New analysis</a>
+
+<article class="report">
+    <div class="report-head">
+        <div class="report-meta">
+            <span class="report-ref">REF {{ report_id }}</span>
+            <span class="report-type">{{ report.analysis_type }} analysis</span>
+        </div>
+        <h1 class="report-target">{{ report.target }}</h1>
+    </div>
+
+    <div class="verdict-row">
+        <div class="stamp {{ verdict_class.get(report.verdict, '') }}">{{ report.verdict }}</div>
+        <div class="score-line">
+            <span class="score-number">{{ report.risk_score }}</span><span class="score-max">/100</span>
+            <div class="score-track"><div class="score-fill {{ verdict_class.get(report.verdict, '') }}" style="width: {{ report.risk_score }}%;"></div></div>
+        </div>
+    </div>
+
+    <section class="findings">
+        {% if report.findings %}
+            {% for category, findings in report.findings_by_category.items() %}
+                <div class="finding-group">
+                    <h3 class="finding-category">{{ category | replace('-', ' ') }}</h3>
+                    <ul class="finding-list">
+                        {% for f in findings %}
+                            <li class="finding-row {% if f.weight == 0 %}is-info{% endif %}">
+                                <span class="finding-weight">{% if f.weight > 0 %}+{{ f.weight }}{% endif %}</span>
+                                <span class="finding-desc">{{ f.description }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p class="no-findings">No suspicious indicators detected.</p>
+        {% endif %}
+    </section>
+
+    <section class="advice">
+        <h2 class="advice-heading">What to do</h2>
+        <ul class="advice-list">
+            {% for step in recommendations.immediate %}
+                <li>{{ step }}</li>
+            {% endfor %}
+        </ul>
+
+        {% if recommendations.if_already_interacted %}
+            <h3 class="advice-subheading">If you already clicked, opened, or entered information</h3>
+            <ul class="advice-list advice-list-urgent">
+                {% for step in recommendations.if_already_interacted %}
+                    <li>{{ step }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    </section>
+
+    <div class="report-actions">
+        <a href="{{ url_for('download_report_json', report_id=report_id) }}" class="btn-outline" target="_blank">Export JSON</a>
+    </div>
+</article>
+
+{% endblock %}

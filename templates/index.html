@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p class="intake-lede">Submit something suspicious below. Each check runs the same detection logic whether you use this dashboard or the command line — pick the type that matches what you received.</p>
+
+<div class="folder">
+    <div class="folder-tabs" role="tablist">
+        <button class="tab active" data-tab="email" role="tab">Email</button>
+        <button class="tab" data-tab="url" role="tab">Link</button>
+        <button class="tab" data-tab="attachment" role="tab">Attachment</button>
+        <button class="tab" data-tab="domain" role="tab">Domain</button>
+    </div>
+
+    <div class="folder-body">
+        <div class="tab-panel active" id="panel-email">
+            <h2>Analyze an email</h2>
+            <p class="panel-note">Upload the raw <code>.eml</code> file, not a screenshot or copy-pasted text. In Outlook: drag the email to your desktop. In Gmail: open it, click the three dots, then "Show original," and save the page as <code>.eml</code>.</p>
+            <form action="{{ url_for('analyze_email_route') }}" method="post" enctype="multipart/form-data">
+                <label class="file-drop">
+                    <input type="file" name="eml_file" accept=".eml" required>
+                    <span class="file-drop-label">Choose .eml file</span>
+                </label>
+                <button type="submit" class="btn-submit">Run analysis</button>
+            </form>
+        </div>
+
+        <div class="tab-panel" id="panel-url">
+            <h2>Analyze a link</h2>
+            <p class="panel-note">Paste the full link. It's only read as text here — never opened or visited.</p>
+            <form action="{{ url_for('analyze_url_route') }}" method="post">
+                <input type="text" name="url" class="text-input" placeholder="http://suspicious-link.example/login" required>
+                <button type="submit" class="btn-submit">Run analysis</button>
+            </form>
+        </div>
+
+        <div class="tab-panel" id="panel-attachment">
+            <h2>Analyze an attachment</h2>
+            <p class="panel-note">Upload the file as received. It's hashed and inspected on this server, then deleted immediately — it is never opened or executed.</p>
+            <form action="{{ url_for('analyze_attachment_route') }}" method="post" enctype="multipart/form-data">
+                <label class="file-drop">
+                    <input type="file" name="attachment_file" required>
+                    <span class="file-drop-label">Choose file</span>
+                </label>
+                <button type="submit" class="btn-submit">Run analysis</button>
+            </form>
+        </div>
+
+        <div class="tab-panel" id="panel-domain">
+            <h2>Analyze a domain</h2>
+            <p class="panel-note">Runs a WHOIS and DNS lookup. Needs internet access; results are best-effort and depend on public registry data.</p>
+            <form action="{{ url_for('analyze_domain_route') }}" method="post">
+                <input type="text" name="domain" class="text-input" placeholder="suspicious-domain.com" required>
+                <button type="submit" class="btn-submit">Run analysis</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.querySelectorAll(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById("panel-" + tab.dataset.tab).classList.add("active");
+    });
+});
+document.querySelectorAll('input[type="file"]').forEach(input => {
+    input.addEventListener("change", () => {
+        const label = input.closest(".file-drop").querySelector(".file-drop-label");
+        label.textContent = input.files.length ? input.files[0].name : "Choose file";
+    });
+});
+</script>
+
+{% endblock %}

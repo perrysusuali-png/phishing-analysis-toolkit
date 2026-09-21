@@ -1,0 +1,15 @@
+# Core CLI toolkit has no hard dependencies beyond the standard library.
+# These enable the optional domain/DNS intel features.
+python-whois>=0.9.4
+dnspython>=2.6.1
+
+# Required for the web dashboard (app.py)
+Flask>=3.0.0
+
+# Required for VirusTotal integration and .env config loading
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Production WSGI server — used when deployed (e.g. Render), skipped on
+# Windows automatically since gunicorn doesn't support it.
+gunicorn>=21.2.0; sys_platform != "win32"
