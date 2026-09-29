@@ -3,6 +3,7 @@ import re
 from urllib.parse import parse_qs, unquote, urlparse
 
 from utils.report import AnalysisReport
+from utils.ioc import extract_iocs
 from analyzers import virustotal_analyzer
 
 
@@ -108,8 +109,13 @@ SUSPICIOUS_FILE_EXTENSIONS = {
     ".hta",
 }
 
-IPV4_SIMPLE_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
-HEX_ESCAPE_RE = re.compile(r"%[0-9a-fA-F]{2}")
+IPV4_SIMPLE_RE = re.compile(
+    r"^(\d{1,3}\.){3}\d{1,3}$"
+)
+
+HEX_ESCAPE_RE = re.compile(
+    r"%[0-9a-fA-F]{2}"
+)
 
 DOUBLE_ENCODING_RE = re.compile(
     r"%25[0-9a-fA-F]{2}|%2525|%255[cC]|%255[fF]"
@@ -118,6 +124,7 @@ DOUBLE_ENCODING_RE = re.compile(
 
 def levenshtein(a, b):
     """Calculate Levenshtein edit distance."""
+
     if a == b:
         return 0
 
@@ -135,7 +142,9 @@ def levenshtein(a, b):
         for j, char_b in enumerate(b, start=1):
             insert_cost = current[j - 1] + 1
             delete_cost = previous[j] + 1
-            replace_cost = previous[j - 1] + (char_a != char_b)
+            replace_cost = previous[j - 1] + (
+                char_a != char_b
+            )
 
             current.append(
                 min(
@@ -156,6 +165,7 @@ def _normalize_url(url):
 
     No network request is made and no redirect is followed.
     """
+
     value = (url or "").strip()
 
     if not value:
@@ -176,6 +186,7 @@ def _normalize_url(url):
 
 def _is_valid_ip(host):
     """Return True when host is a valid IPv4 or IPv6 address."""
+
     if not host:
         return False
 
@@ -184,6 +195,7 @@ def _is_valid_ip(host):
     try:
         ipaddress.ip_address(candidate)
         return True
+
     except ValueError:
         return False
 
@@ -195,6 +207,7 @@ def _registrable_domain(host):
     This does not implement the complete Public Suffix List.
     It handles common multi-level suffixes such as co.uk and com.au.
     """
+
     if not host:
         return ""
 
@@ -233,8 +246,10 @@ def _brand_typosquat(host):
     """
     Detect possible brand-domain impersonation.
 
-    A match is treated as an indicator, not proof of malicious activity.
+    A match is treated as an indicator,
+    not proof of malicious activity.
     """
+
     registrable = _registrable_domain(host)
 
     if not registrable:
@@ -278,7 +293,10 @@ def _brand_typosquat(host):
 
 def _path_terms(path):
     """Return suspicious terms found in the decoded URL path."""
-    decoded = unquote(path or "").lower()
+
+    decoded = unquote(
+        path or ""
+    ).lower()
 
     return sorted(
         {
@@ -291,6 +309,7 @@ def _path_terms(path):
 
 def _query_keys(query):
     """Extract normalized query parameter names."""
+
     try:
         parsed = parse_qs(
             query or "",
@@ -361,7 +380,9 @@ def analyze_url(url, check_vt=True):
     # ------------------------------------------------------------
 
     try:
-        parsed = urlparse(normalized_url)
+        parsed = urlparse(
+            normalized_url
+        )
 
     except Exception as exc:
         report.add(
@@ -374,6 +395,16 @@ def analyze_url(url, check_vt=True):
         )
 
         return report
+
+    # ------------------------------------------------------------
+    # Structured IOC extraction
+    # ------------------------------------------------------------
+    # This only extracts indicators from the supplied URL.
+    # It does not visit or resolve the URL.
+
+    report.add_indicators(
+        extract_iocs(url)
+    )
 
     hostname = (
         parsed.hostname or ""
@@ -407,8 +438,12 @@ def analyze_url(url, check_vt=True):
             "hostname": hostname,
             "scheme": parsed.scheme.lower(),
             "path": parsed.path,
-            "query_present": bool(parsed.query),
-            "fragment_present": bool(parsed.fragment),
+            "query_present": bool(
+                parsed.query
+            ),
+            "fragment_present": bool(
+                parsed.fragment
+            ),
         }
     )
 
@@ -444,7 +479,9 @@ def analyze_url(url, check_vt=True):
     # IP address host
     # ------------------------------------------------------------
 
-    is_ip_address = _is_valid_ip(hostname)
+    is_ip_address = _is_valid_ip(
+        hostname
+    )
 
     if is_ip_address:
         report.add(
@@ -532,7 +569,6 @@ def analyze_url(url, check_vt=True):
         if part
     ]
 
-    # IMPORTANT:
     # IP addresses must not be interpreted as DNS subdomain labels.
     if not is_ip_address:
 
@@ -620,7 +656,9 @@ def analyze_url(url, check_vt=True):
     # Brand impersonation / typosquatting
     # ------------------------------------------------------------
 
-    typo_matches = _brand_typosquat(hostname)
+    typo_matches = _brand_typosquat(
+        hostname
+    )
 
     if typo_matches:
         best_match = min(
@@ -664,7 +702,10 @@ def analyze_url(url, check_vt=True):
     if port is not None:
 
         normal_port = (
-            (scheme == "http" and port == 80)
+            (
+                scheme == "http"
+                and port == 80
+            )
             or (
                 scheme == "https"
                 and port == 443
@@ -881,6 +922,7 @@ def extract_urls(text):
     This function only extracts URL strings.
     It does not visit, resolve, or execute them.
     """
+
     if not text:
         return []
 

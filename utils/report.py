@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from utils.ioc import empty_ioc_store, merge_iocs
 from utils.recommendations import get_recommendations
 
 
@@ -54,12 +55,16 @@ class Finding:
     def _severity_from_weight(weight: int) -> str:
         if weight >= 40:
             return "critical"
+
         if weight >= 25:
             return "high"
+
         if weight >= 15:
             return "medium"
+
         if weight > 0:
             return "low"
+
         return "info"
 
     @property
@@ -88,7 +93,19 @@ class AnalysisReport:
         self.target = target
         self.analysis_type = analysis_type
         self.findings: list[Finding] = []
+
+        # Structured indicators of compromise (IOCs)
+        self.indicators = empty_ioc_store()
+
         self.timestamp = datetime.now(timezone.utc).isoformat()
+
+    def add_indicators(self, indicators: dict[str, Any]) -> None:
+        """Merge structured IOCs into the report."""
+
+        self.indicators = merge_iocs(
+            self.indicators,
+            indicators,
+        )
 
     def add(
         self,
@@ -125,6 +142,7 @@ class AnalysisReport:
         )
 
         self.findings.append(finding)
+
         return finding
 
     @property
@@ -160,14 +178,18 @@ class AnalysisReport:
         """
 
         weighted = [
-            f for f in self.findings
+            f
+            for f in self.findings
             if f.weight > 0
         ]
 
         if not weighted:
             return 0.0
 
-        total_weight = sum(f.weight for f in weighted)
+        total_weight = sum(
+            f.weight
+            for f in weighted
+        )
 
         if total_weight == 0:
             return 0.0
@@ -222,6 +244,8 @@ class AnalysisReport:
         ]
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert the complete report into a JSON-compatible dictionary."""
+
         return {
             "target": self.target,
             "analysis_type": self.analysis_type,
@@ -238,6 +262,7 @@ class AnalysisReport:
                 finding.to_dict()
                 for finding in self.findings
             ],
+            "indicators": self.indicators,
             "recommendations": get_recommendations(
                 self.analysis_type,
                 self.verdict,
@@ -245,6 +270,8 @@ class AnalysisReport:
         }
 
     def print_summary(self):
+        """Print a readable CLI summary."""
+
         bar_len = 30
 
         filled = int(
@@ -257,10 +284,12 @@ class AnalysisReport:
         )
 
         print("\n" + "=" * 60)
+
         print(
             f"  {self.analysis_type.upper()} ANALYSIS: "
             f"{self.target}"
         )
+
         print("=" * 60)
 
         print(
@@ -336,6 +365,8 @@ class AnalysisReport:
             print()
 
     def export_json(self, path: str):
+        """Export the complete report as formatted JSON."""
+
         with open(
             path,
             "w",
