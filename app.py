@@ -38,6 +38,12 @@ from analyzers.domain_analyzer import analyze_domain
 from analyzers.email_analyzer import analyze_email
 from analyzers.url_analyzer import analyze_url
 from utils.recommendations import get_recommendations
+from utils.database import (
+    get_analysis_by_report_id,
+    get_database_stats,
+    init_database,
+    save_analysis,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -68,16 +74,33 @@ app.secret_key = os.environ.get(
     "dev-only-change-me",
 )
 
-# Maximum request/upload size.
-MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "25"))
+
+# Initialize SQLite persistence.
+init_database()
+
+
+# ---------------------------------------------------------------------------
+# Upload/request limits
+# ---------------------------------------------------------------------------
+
+MAX_UPLOAD_MB = int(
+    os.environ.get(
+        "MAX_UPLOAD_MB",
+        "25",
+    )
+)
+
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
-# Werkzeug request/form limits.
 app.config["MAX_FORM_MEMORY_SIZE"] = MAX_UPLOAD_BYTES
+
 app.config["MAX_FORM_PARTS"] = int(
-    os.environ.get("MAX_FORM_PARTS", "10000")
+    os.environ.get(
+        "MAX_FORM_PARTS",
+        "10000",
+    )
 )
 
 
@@ -85,15 +108,21 @@ app.config["MAX_FORM_PARTS"] = int(
 # Configuration
 # ---------------------------------------------------------------------------
 
-CACHE_LIMIT = int(os.environ.get("REPORT_CACHE_LIMIT", "50"))
+CACHE_LIMIT = int(
+    os.environ.get(
+        "REPORT_CACHE_LIMIT",
+        "50",
+    )
+)
 
-# Restrict uploaded files to types this toolkit is expected to analyze.
+
+# Restrict email uploads to raw .eml files.
 ALLOWED_EMAIL_EXTENSIONS = {
     ".eml",
 }
 
-# These are intentionally broad because the attachment analyzer should
-# inspect many file types rather than relying only on the extension.
+
+# Block executable/script formats from dashboard uploads.
 BLOCKED_EXTENSIONS = {
     ".exe",
     ".dll",
@@ -111,6 +140,7 @@ BLOCKED_EXTENSIONS = {
     ".wsh",
 }
 
+
 MAX_URL_LENGTH = 4096
 MAX_DOMAIN_LENGTH = 253
 
@@ -119,7 +149,7 @@ MAX_DOMAIN_LENGTH = 253
 # In-memory report cache
 # ---------------------------------------------------------------------------
 
-# OrderedDict gives us simple FIFO eviction while preserving insertion order.
+# Reports currently exist only for the lifetime of the Flask process.
 _REPORT_CACHE: OrderedDict[str, object] = OrderedDict()
 
 
@@ -127,8 +157,8 @@ def _cache_report(report) -> str:
     """
     Store a report in memory and return its short identifier.
 
-    The cache intentionally remains small because this is a local analyst
-    dashboard rather than a database-backed multi-user application.
+    The cache intentionally remains small because this is currently
+    a local analyst dashboard rather than a database-backed application.
     """
 
     report_id = uuid.uuid4().hex[:12]
@@ -145,8 +175,7 @@ def _get_cached_report(report_id: str):
     """
     Retrieve a cached report.
 
-    Moving the report to the end means recently used reports stay available
-    slightly longer when the cache is under pressure.
+    Recently accessed reports are moved to the end of the cache.
     """
 
     report = _REPORT_CACHE.get(report_id)
@@ -157,12 +186,248 @@ def _get_cached_report(report_id: str):
     return report
 
 
-def _render_result(report):
+# ---------------------------------------------------------------------------
+# Dashboard statistics
+# ---------------------------------------------------------------------------
+
+def _build_dashboard():
     """
-    Cache a report and render the result page.
+    Build statistics for the Analyst Overview dashboard.
+
+    The dashboard uses reports currently stored in the in-memory
+    report cache.
     """
 
-    report_id = _cache_report(report)
+    reports = list(
+        _REPORT_CACHE.values()
+    )
+
+    total = len(reports)
+
+    high = 0
+    suspicious = 0
+
+    email = 0
+    url = 0
+    domain = 0
+    attachment = 0
+
+    ioc_urls = 0
+    ioc_domains = 0
+    ioc_ips = 0
+    ioc_emails = 0
+    ioc_hashes = 0
+
+    # ------------------------------------------------------------------
+    # Process reports
+    # ------------------------------------------------------------------
+
+    for report in reports:
+
+        # Risk distribution
+        if report.risk_score >= 70:
+            high += 1
+
+        elif report.risk_score >= 35:
+            suspicious += 1
+
+        # Analysis type
+        analysis_type = (
+            report.analysis_type
+            .lower()
+            .strip()
+        )
+
+        if analysis_type == "email":
+            email += 1
+
+        elif analysis_type == "url":
+            url += 1
+
+        elif analysis_type == "domain":
+            domain += 1
+
+        elif analysis_type == "attachment":
+            attachment += 1
+
+        # --------------------------------------------------------------
+        # IOC statistics
+        # --------------------------------------------------------------
+
+        indicators = getattr(
+            report,
+            "indicators",
+            {},
+        ) or {}
+
+        ioc_urls += len(
+            indicators.get(
+                "urls",
+                [],
+            )
+        )
+
+        ioc_domains += len(
+            indicators.get(
+                "domains",
+                [],
+            )
+        )
+
+        ioc_ips += len(
+            indicators.get(
+                "ip_addresses",
+                [],
+            )
+        )
+
+        ioc_emails += len(
+            indicators.get(
+                "emails",
+                [],
+            )
+        )
+
+        hashes = indicators.get(
+            "file_hashes",
+            {},
+        ) or {}
+
+        ioc_hashes += (
+            len(
+                hashes.get(
+                    "md5",
+                    [],
+                )
+            )
+            +
+            len(
+                hashes.get(
+                    "sha1",
+                    [],
+                )
+            )
+            +
+            len(
+                hashes.get(
+                    "sha256",
+                    [],
+                )
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Prevent division by zero
+    # ------------------------------------------------------------------
+
+    denominator = max(
+        total,
+        1,
+    )
+
+    # ------------------------------------------------------------------
+    # Recent reports
+    # ------------------------------------------------------------------
+
+    recent = []
+
+    for report in reversed(
+        reports[-10:]
+    ):
+
+        recent.append(
+            {
+                "analysis_type": report.analysis_type,
+                "target": report.target,
+                "risk_score": report.risk_score,
+                "confidence_percent": (
+                    report.confidence_percent
+                ),
+                "finding_count": len(
+                    report.findings
+                ),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Dashboard data
+    # ------------------------------------------------------------------
+
+    return {
+        # Overall
+        "total": total,
+        "high": high,
+        "suspicious": suspicious,
+
+        # Total IOC count
+        "iocs": (
+            ioc_urls
+            + ioc_domains
+            + ioc_ips
+            + ioc_emails
+            + ioc_hashes
+        ),
+
+        # Analysis type counts
+        "email": email,
+        "url": url,
+        "domain": domain,
+        "attachment": attachment,
+
+        # Analysis type percentages
+        "percent_email": round(
+            email / denominator * 100
+        ),
+
+        "percent_url": round(
+            url / denominator * 100
+        ),
+
+        "percent_domain": round(
+            domain / denominator * 100
+        ),
+
+        "percent_attachment": round(
+            attachment / denominator * 100
+        ),
+
+        # IOC counts
+        "ioc_urls": ioc_urls,
+        "ioc_domains": ioc_domains,
+        "ioc_ips": ioc_ips,
+        "ioc_emails": ioc_emails,
+        "ioc_hashes": ioc_hashes,
+
+        # Recent reports
+        "recent": recent,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Result rendering
+# ---------------------------------------------------------------------------
+
+def _render_result(report):
+    """
+    Cache a report, persist it to SQLite, and render the result page.
+    """
+
+    report_id = _cache_report(
+        report
+    )
+
+    # Persist the completed analysis without allowing a database
+    # failure to prevent the analyst from seeing the result.
+    try:
+        save_analysis(
+            report,
+            report_id=report_id,
+        )
+    except Exception:
+        app.logger.exception(
+            "Failed to persist analysis report %s",
+            report_id,
+        )
 
     recommendations = get_recommendations(
         report.analysis_type,
@@ -181,28 +446,37 @@ def _render_result(report):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _allowed_file(filename: str, analysis_type: str) -> bool:
+def _allowed_file(
+    filename: str,
+    analysis_type: str,
+) -> bool:
     """
     Validate a filename before saving it.
 
-    This is not a security boundary by itself; the analyzer should still
-    inspect the file contents safely.
+    This is not a complete security boundary. The analyzer must
+    still inspect files safely.
     """
 
-    suffix = Path(filename).suffix.lower()
+    suffix = Path(
+        filename
+    ).suffix.lower()
 
     if analysis_type == "email":
         return suffix in ALLOWED_EMAIL_EXTENSIONS
 
     if analysis_type == "attachment":
-        # Block common executable/script formats from being casually uploaded.
-        # They can still be investigated later if the policy is changed.
-        return suffix not in BLOCKED_EXTENSIONS
+
+        return (
+            suffix
+            not in BLOCKED_EXTENSIONS
+        )
 
     return False
 
 
-def _save_uploaded_file(file_storage):
+def _save_uploaded_file(
+    file_storage,
+):
     """
     Save an uploaded file using a generated filename.
 
@@ -211,31 +485,48 @@ def _save_uploaded_file(file_storage):
     """
 
     original_name = secure_filename(
-        file_storage.filename or "uploaded_file"
+        file_storage.filename
+        or "uploaded_file"
     )
 
     if not original_name:
         original_name = "uploaded_file"
 
     generated_name = (
-        f"{uuid.uuid4().hex}_{original_name}"
+        f"{uuid.uuid4().hex}_"
+        f"{original_name}"
     )
 
-    saved_path = UPLOAD_DIR / generated_name
+    saved_path = (
+        UPLOAD_DIR
+        / generated_name
+    )
 
-    file_storage.save(saved_path)
+    file_storage.save(
+        saved_path
+    )
 
-    return saved_path, original_name
+    return (
+        saved_path,
+        original_name,
+    )
 
 
-def _remove_file(path: Path) -> None:
+def _remove_file(
+    path: Path,
+) -> None:
     """
     Best-effort temporary-file cleanup.
     """
 
     try:
-        path.unlink(missing_ok=True)
+
+        path.unlink(
+            missing_ok=True
+        )
+
     except OSError:
+
         app.logger.warning(
             "Could not remove temporary file: %s",
             path,
@@ -263,147 +554,241 @@ def _handle_analyzer_error(
         "error",
     )
 
-    return redirect(url_for("index"))
+    return redirect(
+        url_for("index")
+    )
 
 
 # ---------------------------------------------------------------------------
 # Error handlers
 # ---------------------------------------------------------------------------
 
-@app.errorhandler(RequestEntityTooLarge)
-def handle_request_too_large(error):
+@app.errorhandler(
+    RequestEntityTooLarge
+)
+def handle_request_too_large(
+    error,
+):
     """
     Handle uploads larger than MAX_CONTENT_LENGTH.
     """
 
     flash(
-        f"That file is too large. "
-        f"The maximum upload size is {MAX_UPLOAD_MB} MB.",
+        "That file is too large. "
+        f"The maximum upload size is "
+        f"{MAX_UPLOAD_MB} MB.",
         "error",
     )
 
-    return redirect(url_for("index")), 413
+    return (
+        redirect(
+            url_for("index")
+        ),
+        413,
+    )
 
 
 @app.errorhandler(400)
-def handle_bad_request(error):
+def handle_bad_request(
+    error,
+):
+
     flash(
         "The request could not be processed.",
         "error",
     )
 
-    return redirect(url_for("index")), 400
+    return (
+        redirect(
+            url_for("index")
+        ),
+        400,
+    )
 
 
 @app.errorhandler(404)
-def handle_not_found(error):
-    return redirect(url_for("index"))
+def handle_not_found(
+    error,
+):
+
+    return redirect(
+        url_for("index")
+    )
 
 
 @app.errorhandler(500)
-def handle_internal_error(error):
+def handle_internal_error(
+    error,
+):
     """
     Avoid exposing Python tracebacks to the browser.
     """
 
-    app.logger.exception("Unhandled application error")
+    app.logger.exception(
+        "Unhandled application error"
+    )
 
     flash(
         "An unexpected application error occurred.",
         "error",
     )
 
-    return redirect(url_for("index")), 500
+    return (
+        redirect(
+            url_for("index")
+        ),
+        500,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# Dashboard route
 # ---------------------------------------------------------------------------
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+
+    dashboard = _build_dashboard()
+
+    return render_template(
+        "index.html",
+        dashboard=dashboard,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Email analysis
 # ---------------------------------------------------------------------------
 
-@app.route("/analyze/email", methods=["POST"])
+@app.route(
+    "/analyze/email",
+    methods=["POST"],
+)
 def analyze_email_route():
-    file = request.files.get("eml_file")
 
-    if not file or not file.filename:
+    file = request.files.get(
+        "eml_file"
+    )
+
+    if (
+        not file
+        or not file.filename
+    ):
+
         flash(
             "Please choose a .eml file to analyze.",
             "error",
         )
-        return redirect(url_for("index"))
 
-    if not _allowed_file(file.filename, "email"):
+        return redirect(
+            url_for("index")
+        )
+
+    if not _allowed_file(
+        file.filename,
+        "email",
+    ):
+
         flash(
-            "Only .eml files are accepted for email analysis.",
+            "Only .eml files are accepted "
+            "for email analysis.",
             "error",
         )
-        return redirect(url_for("index"))
+
+        return redirect(
+            url_for("index")
+        )
 
     saved_path = None
 
     try:
-        saved_path, original_name = _save_uploaded_file(file)
+
+        saved_path, original_name = (
+            _save_uploaded_file(file)
+        )
 
         app.logger.info(
             "Starting email analysis: %s",
             original_name,
         )
 
-        report = analyze_email(str(saved_path))
+        report = analyze_email(
+            str(saved_path)
+        )
 
-        # Present the original filename instead of the generated temp path.
+        # Display the original filename.
         report.target = original_name
 
-        return _render_result(report)
+        return _render_result(
+            report
+        )
 
     except Exception as exc:
+
         return _handle_analyzer_error(
             "Email",
             exc,
         )
 
     finally:
+
         if saved_path:
-            _remove_file(saved_path)
+            _remove_file(
+                saved_path
+            )
 
 
 # ---------------------------------------------------------------------------
 # URL analysis
 # ---------------------------------------------------------------------------
 
-@app.route("/analyze/url", methods=["POST"])
+@app.route(
+    "/analyze/url",
+    methods=["POST"],
+)
 def analyze_url_route():
-    target = request.form.get("url", "").strip()
+
+    target = request.form.get(
+        "url",
+        "",
+    ).strip()
 
     if not target:
+
         flash(
             "Please enter a URL to analyze.",
             "error",
         )
-        return redirect(url_for("index"))
+
+        return redirect(
+            url_for("index")
+        )
 
     if len(target) > MAX_URL_LENGTH:
+
         flash(
-            f"The URL is too long. Maximum length is "
+            "The URL is too long. "
+            f"Maximum length is "
             f"{MAX_URL_LENGTH} characters.",
             "error",
         )
-        return redirect(url_for("index"))
+
+        return redirect(
+            url_for("index")
+        )
 
     try:
-        report = analyze_url(target)
 
-        return _render_result(report)
+        report = analyze_url(
+            target
+        )
+
+        return _render_result(
+            report
+        )
 
     except Exception as exc:
+
         return _handle_analyzer_error(
             "URL",
             exc,
@@ -414,81 +799,135 @@ def analyze_url_route():
 # Attachment analysis
 # ---------------------------------------------------------------------------
 
-@app.route("/analyze/attachment", methods=["POST"])
+@app.route(
+    "/analyze/attachment",
+    methods=["POST"],
+)
 def analyze_attachment_route():
-    file = request.files.get("attachment_file")
 
-    if not file or not file.filename:
+    file = request.files.get(
+        "attachment_file"
+    )
+
+    if (
+        not file
+        or not file.filename
+    ):
+
         flash(
             "Please choose a file to analyze.",
             "error",
         )
-        return redirect(url_for("index"))
 
-    if not _allowed_file(file.filename, "attachment"):
+        return redirect(
+            url_for("index")
+        )
+
+    if not _allowed_file(
+        file.filename,
+        "attachment",
+    ):
+
         flash(
-            "This file type is blocked by the dashboard upload policy.",
+            "This file type is blocked "
+            "by the dashboard upload policy.",
             "error",
         )
-        return redirect(url_for("index"))
+
+        return redirect(
+            url_for("index")
+        )
 
     saved_path = None
 
     try:
-        saved_path, original_name = _save_uploaded_file(file)
+
+        saved_path, original_name = (
+            _save_uploaded_file(file)
+        )
 
         app.logger.info(
             "Starting attachment analysis: %s",
             original_name,
         )
 
-        report = analyze_attachment(str(saved_path))
+        report = analyze_attachment(
+            str(saved_path)
+        )
 
-        # Keep analyst-friendly target information.
+        # Keep the analyst-friendly filename.
         report.target = original_name
 
-        return _render_result(report)
+        return _render_result(
+            report
+        )
 
     except Exception as exc:
+
         return _handle_analyzer_error(
             "Attachment",
             exc,
         )
 
     finally:
+
         if saved_path:
-            _remove_file(saved_path)
+            _remove_file(
+                saved_path
+            )
 
 
 # ---------------------------------------------------------------------------
 # Domain analysis
 # ---------------------------------------------------------------------------
 
-@app.route("/analyze/domain", methods=["POST"])
+@app.route(
+    "/analyze/domain",
+    methods=["POST"],
+)
 def analyze_domain_route():
-    target = request.form.get("domain", "").strip()
+
+    target = request.form.get(
+        "domain",
+        "",
+    ).strip()
 
     if not target:
+
         flash(
             "Please enter a domain to analyze.",
             "error",
         )
-        return redirect(url_for("index"))
+
+        return redirect(
+            url_for("index")
+        )
 
     if len(target) > MAX_DOMAIN_LENGTH:
+
         flash(
-            f"The domain is too long. Maximum length is "
+            "The domain is too long. "
+            f"Maximum length is "
             f"{MAX_DOMAIN_LENGTH} characters.",
             "error",
         )
-        return redirect(url_for("index"))
+
+        return redirect(
+            url_for("index")
+        )
 
     try:
-        report = analyze_domain(target)
 
-        return _render_result(report)
+        report = analyze_domain(
+            target
+        )
+
+        return _render_result(
+            report
+        )
 
     except Exception as exc:
+
         return _handle_analyzer_error(
             "Domain",
             exc,
@@ -499,30 +938,63 @@ def analyze_domain_route():
 # JSON report export
 # ---------------------------------------------------------------------------
 
-@app.route("/report/<report_id>/json")
-def download_report_json(report_id):
-    report = _get_cached_report(report_id)
+@app.route(
+    "/report/<report_id>/json"
+)
+def download_report_json(
+    report_id,
+):
 
-    if report is None:
-        flash(
-            "That report has expired or was never generated.",
-            "error",
-        )
-        return redirect(url_for("index"))
+    report = _get_cached_report(
+        report_id
+    )
 
-    try:
-        data = report.to_dict()
-    except Exception as exc:
-        return _handle_analyzer_error(
-            "Report export",
-            exc,
-        )
+    # Fall back to SQLite when the in-memory cache no longer
+    # contains the requested report.
+    if report is not None:
+        try:
+            data = report.to_dict()
+        except Exception as exc:
+            return _handle_analyzer_error(
+                "Report export",
+                exc,
+            )
+    else:
+        try:
+            stored = get_analysis_by_report_id(
+                report_id
+            )
+        except Exception:
+            app.logger.exception(
+                "Failed to retrieve report %s from SQLite",
+                report_id,
+            )
+            stored = None
 
-    response = jsonify(data)
+        if stored is None:
+            flash(
+                "That report has expired "
+                "or was never generated.",
+                "error",
+            )
 
-    # Tell browsers that this is a downloadable JSON document.
-    response.headers["Content-Disposition"] = (
-        f'attachment; filename="analysis-{report_id}.json"'
+            return redirect(
+                url_for("index")
+            )
+
+        data = stored["report"]
+
+
+    response = jsonify(
+        data
+    )
+
+    response.headers[
+        "Content-Disposition"
+    ] = (
+        f'attachment; '
+        f'filename="analysis-'
+        f'{report_id}.json"'
     )
 
     return response
@@ -537,15 +1009,32 @@ def health():
     """
     Lightweight local health check.
 
-    Useful for debugging the dashboard and future frontend integration.
+    Useful for debugging the dashboard and future
+    frontend integration.
     """
+
+    try:
+        database = get_database_stats()
+        database_status = "ok"
+    except Exception:
+        app.logger.exception(
+            "Database health check failed"
+        )
+        database = {}
+        database_status = "error"
 
     return jsonify(
         {
-            "status": "ok",
-            "service": "phishing-analysis-toolkit",
-            "reports_cached": len(_REPORT_CACHE),
+            "status": "ok" if database_status == "ok" else "degraded",
+            "service": (
+                "phishing-analysis-toolkit"
+            ),
+            "reports_cached": len(
+                _REPORT_CACHE
+            ),
             "cache_limit": CACHE_LIMIT,
+            "database_status": database_status,
+            "database": database,
         }
     )
 
@@ -555,6 +1044,7 @@ def health():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+
     host = os.environ.get(
         "HOST",
         "127.0.0.1",
@@ -569,22 +1059,32 @@ if __name__ == "__main__":
 
     debug = (
         os.environ
-        .get("FLASK_DEBUG", "true")
+        .get(
+            "FLASK_DEBUG",
+            "true",
+        )
         .lower()
         == "true"
     )
 
-    if host != "127.0.0.1" and debug:
+    if (
+        host != "127.0.0.1"
+        and debug
+    ):
+
         print(
             "\n"
-            "WARNING:\n"
-            "  Flask debug mode is enabled while the application is\n"
-            "  listening on a non-localhost address.\n"
+            "============================================================\n"
+            " WARNING\n"
+            "============================================================\n"
+            " Flask debug mode is enabled while the application is\n"
+            " listening on a non-localhost address.\n"
             "\n"
-            "  The interactive debugger should not be exposed to other\n"
-            "  machines.\n"
+            " The interactive debugger should not be exposed to other\n"
+            " machines.\n"
             "\n"
-            "  Set FLASK_DEBUG=false before using a non-localhost HOST.\n"
+            " Set FLASK_DEBUG=false before using a non-localhost HOST.\n"
+            "============================================================\n"
         )
 
     print(
@@ -596,6 +1096,7 @@ if __name__ == "__main__":
         f" Upload limit: {MAX_UPLOAD_MB} MB\n"
         f" Report cache: {CACHE_LIMIT}\n"
         f" Debug:        {debug}\n"
+        " Dashboard:    Analyst Overview\n"
         "============================================================\n"
     )
 

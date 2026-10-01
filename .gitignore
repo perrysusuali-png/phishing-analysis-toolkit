@@ -4,3 +4,17 @@ __pycache__/
 .env
 uploads/*
 !uploads/.gitkeep
+
+# Local SQLite database
+data/*.db
+
+# Local backups
+app_backup*.py
+app_working_before_database_integration.py
+static/style_backup.css
+templates/index_backup.html
+
+# Development integration/test scripts
+integrate_*.py
+test_database_integration.py
+test_report_export.py
