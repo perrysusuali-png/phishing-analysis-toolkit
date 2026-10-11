@@ -7,8 +7,16 @@ services:
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60
     healthCheckPath: /health
     envVars:
+      - key: APP_ENV
+        value: production
+      - key: REQUIRE_AUTH
+        value: "true"
       - key: TOOLKIT_SECRET_KEY
         generateValue: true
+      - key: TOOLKIT_USERNAME
+        sync: false
+      - key: TOOLKIT_PASSWORD
+        sync: false
       - key: FLASK_DEBUG
         value: "false"
       - key: TRUST_PROXY

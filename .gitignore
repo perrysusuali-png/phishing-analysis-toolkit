@@ -1,20 +1,30 @@
+# Python
 venv/
+.venv/
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Secrets
 .env
+.env.*
+
+# Local data and uploads
+data/*.db
 uploads/*
 !uploads/.gitkeep
 
-# Local SQLite database
-data/*.db
-
 # Local backups
-app_backup*.py
-app_working_before_database_integration.py
+app.py.bak
+app.py.before_auth.bak
+app.py.predeploy.bak
+app_backup.py
+app_backup_before_database.py
 static/style_backup.css
 templates/index_backup.html
+templates/index_before_irt.html
 
-# Development integration/test scripts
+# Development scripts and tests
 integrate_*.py
 test_database_integration.py
 test_report_export.py
+app_working_before_database_integration.py

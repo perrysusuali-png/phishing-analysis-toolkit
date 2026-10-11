@@ -1,20 +1,9 @@
+
 #!/usr/bin/env python3
-"""
-Phishing Analysis Toolkit — Web Dashboard.
-
-Run with:
-    py app.py         (Windows)
-    python3 app.py    (macOS/Linux)
-
-Then open:
-    http://127.0.0.1:5000
-
-This application is designed for local analyst/DFIR use.
-It is NOT hardened for public Internet exposure.
-"""
 
 from __future__ import annotations
 
+import hmac
 import os
 import uuid
 from collections import OrderedDict
@@ -40,89 +29,61 @@ from analyzers.url_analyzer import analyze_url
 from utils.recommendations import get_recommendations
 from utils.database import (
     get_analysis_by_report_id,
-    get_database_stats,
+    get_case_by_id,
+    get_dashboard_stats,
     init_database,
+    list_cases,
+    list_recent_analyses,
     save_analysis,
+    update_case,
 )
 
 
-# ---------------------------------------------------------------------------
-# Environment
-# ---------------------------------------------------------------------------
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 load_dotenv()
 
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
-
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# Flask application
-# ---------------------------------------------------------------------------
 
 app = Flask(__name__)
 
-app.secret_key = os.environ.get(
-    "TOOLKIT_SECRET_KEY",
-    "dev-only-change-me",
-)
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
 
+app.secret_key = os.environ.get("TOOLKIT_SECRET_KEY")
 
-# Initialize SQLite persistence.
+if not app.secret_key:
+    if APP_ENV == "production":
+        raise RuntimeError(
+            "TOOLKIT_SECRET_KEY must be set in production."
+        )
+
+    app.secret_key = "dev-only-change-me"
+
 init_database()
 
-
-# ---------------------------------------------------------------------------
-# Upload/request limits
-# ---------------------------------------------------------------------------
-
-MAX_UPLOAD_MB = int(
-    os.environ.get(
-        "MAX_UPLOAD_MB",
-        "25",
-    )
-)
-
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "25"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
-
 app.config["MAX_FORM_MEMORY_SIZE"] = MAX_UPLOAD_BYTES
-
 app.config["MAX_FORM_PARTS"] = int(
-    os.environ.get(
-        "MAX_FORM_PARTS",
-        "10000",
-    )
+    os.environ.get("MAX_FORM_PARTS", "10000")
 )
 
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-CACHE_LIMIT = int(
-    os.environ.get(
-        "REPORT_CACHE_LIMIT",
-        "50",
-    )
+CACHE_LIMIT = max(
+    1,
+    int(os.environ.get("REPORT_CACHE_LIMIT", "50")),
 )
 
+MAX_URL_LENGTH = 4096
+MAX_DOMAIN_LENGTH = 253
 
-# Restrict email uploads to raw .eml files.
-ALLOWED_EMAIL_EXTENSIONS = {
-    ".eml",
-}
+ALLOWED_EMAIL_EXTENSIONS = {".eml"}
 
-
-# Block executable/script formats from dashboard uploads.
 BLOCKED_EXTENSIONS = {
     ".exe",
     ".dll",
@@ -140,29 +101,15 @@ BLOCKED_EXTENSIONS = {
     ".wsh",
 }
 
-
-MAX_URL_LENGTH = 4096
-MAX_DOMAIN_LENGTH = 253
-
-
-# ---------------------------------------------------------------------------
-# In-memory report cache
-# ---------------------------------------------------------------------------
-
-# Reports currently exist only for the lifetime of the Flask process.
 _REPORT_CACHE: OrderedDict[str, object] = OrderedDict()
 
 
+# ============================================================
+# DATABASE AND REPORT HELPERS
+# ============================================================
+
 def _cache_report(report) -> str:
-    """
-    Store a report in memory and return its short identifier.
-
-    The cache intentionally remains small because this is currently
-    a local analyst dashboard rather than a database-backed application.
-    """
-
     report_id = uuid.uuid4().hex[:12]
-
     _REPORT_CACHE[report_id] = report
 
     while len(_REPORT_CACHE) > CACHE_LIMIT:
@@ -172,12 +119,6 @@ def _cache_report(report) -> str:
 
 
 def _get_cached_report(report_id: str):
-    """
-    Retrieve a cached report.
-
-    Recently accessed reports are moved to the end of the cache.
-    """
-
     report = _REPORT_CACHE.get(report_id)
 
     if report is not None:
@@ -186,238 +127,15 @@ def _get_cached_report(report_id: str):
     return report
 
 
-# ---------------------------------------------------------------------------
-# Dashboard statistics
-# ---------------------------------------------------------------------------
-
 def _build_dashboard():
-    """
-    Build statistics for the Analyst Overview dashboard.
+    dashboard = get_dashboard_stats()
+    dashboard["recent"] = list_recent_analyses(10)
+    return dashboard
 
-    The dashboard uses reports currently stored in the in-memory
-    report cache.
-    """
-
-    reports = list(
-        _REPORT_CACHE.values()
-    )
-
-    total = len(reports)
-
-    high = 0
-    suspicious = 0
-
-    email = 0
-    url = 0
-    domain = 0
-    attachment = 0
-
-    ioc_urls = 0
-    ioc_domains = 0
-    ioc_ips = 0
-    ioc_emails = 0
-    ioc_hashes = 0
-
-    # ------------------------------------------------------------------
-    # Process reports
-    # ------------------------------------------------------------------
-
-    for report in reports:
-
-        # Risk distribution
-        if report.risk_score >= 70:
-            high += 1
-
-        elif report.risk_score >= 35:
-            suspicious += 1
-
-        # Analysis type
-        analysis_type = (
-            report.analysis_type
-            .lower()
-            .strip()
-        )
-
-        if analysis_type == "email":
-            email += 1
-
-        elif analysis_type == "url":
-            url += 1
-
-        elif analysis_type == "domain":
-            domain += 1
-
-        elif analysis_type == "attachment":
-            attachment += 1
-
-        # --------------------------------------------------------------
-        # IOC statistics
-        # --------------------------------------------------------------
-
-        indicators = getattr(
-            report,
-            "indicators",
-            {},
-        ) or {}
-
-        ioc_urls += len(
-            indicators.get(
-                "urls",
-                [],
-            )
-        )
-
-        ioc_domains += len(
-            indicators.get(
-                "domains",
-                [],
-            )
-        )
-
-        ioc_ips += len(
-            indicators.get(
-                "ip_addresses",
-                [],
-            )
-        )
-
-        ioc_emails += len(
-            indicators.get(
-                "emails",
-                [],
-            )
-        )
-
-        hashes = indicators.get(
-            "file_hashes",
-            {},
-        ) or {}
-
-        ioc_hashes += (
-            len(
-                hashes.get(
-                    "md5",
-                    [],
-                )
-            )
-            +
-            len(
-                hashes.get(
-                    "sha1",
-                    [],
-                )
-            )
-            +
-            len(
-                hashes.get(
-                    "sha256",
-                    [],
-                )
-            )
-        )
-
-    # ------------------------------------------------------------------
-    # Prevent division by zero
-    # ------------------------------------------------------------------
-
-    denominator = max(
-        total,
-        1,
-    )
-
-    # ------------------------------------------------------------------
-    # Recent reports
-    # ------------------------------------------------------------------
-
-    recent = []
-
-    for report in reversed(
-        reports[-10:]
-    ):
-
-        recent.append(
-            {
-                "analysis_type": report.analysis_type,
-                "target": report.target,
-                "risk_score": report.risk_score,
-                "confidence_percent": (
-                    report.confidence_percent
-                ),
-                "finding_count": len(
-                    report.findings
-                ),
-            }
-        )
-
-    # ------------------------------------------------------------------
-    # Dashboard data
-    # ------------------------------------------------------------------
-
-    return {
-        # Overall
-        "total": total,
-        "high": high,
-        "suspicious": suspicious,
-
-        # Total IOC count
-        "iocs": (
-            ioc_urls
-            + ioc_domains
-            + ioc_ips
-            + ioc_emails
-            + ioc_hashes
-        ),
-
-        # Analysis type counts
-        "email": email,
-        "url": url,
-        "domain": domain,
-        "attachment": attachment,
-
-        # Analysis type percentages
-        "percent_email": round(
-            email / denominator * 100
-        ),
-
-        "percent_url": round(
-            url / denominator * 100
-        ),
-
-        "percent_domain": round(
-            domain / denominator * 100
-        ),
-
-        "percent_attachment": round(
-            attachment / denominator * 100
-        ),
-
-        # IOC counts
-        "ioc_urls": ioc_urls,
-        "ioc_domains": ioc_domains,
-        "ioc_ips": ioc_ips,
-        "ioc_emails": ioc_emails,
-        "ioc_hashes": ioc_hashes,
-
-        # Recent reports
-        "recent": recent,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Result rendering
-# ---------------------------------------------------------------------------
 
 def _render_result(report):
-    """
-    Cache a report, persist it to SQLite, and render the result page.
-    """
+    report_id = _cache_report(report)
 
-    report_id = _cache_report(
-        report
-    )
-
-    # Persist the completed analysis without allowing a database
-    # failure to prevent the analyst from seeing the result.
     try:
         save_analysis(
             report,
@@ -442,91 +160,37 @@ def _render_result(report):
     )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _allowed_file(
-    filename: str,
-    analysis_type: str,
-) -> bool:
-    """
-    Validate a filename before saving it.
-
-    This is not a complete security boundary. The analyzer must
-    still inspect files safely.
-    """
-
-    suffix = Path(
-        filename
-    ).suffix.lower()
+def _allowed_file(filename: str, analysis_type: str) -> bool:
+    suffix = Path(filename).suffix.lower()
 
     if analysis_type == "email":
         return suffix in ALLOWED_EMAIL_EXTENSIONS
 
     if analysis_type == "attachment":
-
-        return (
-            suffix
-            not in BLOCKED_EXTENSIONS
-        )
+        return suffix not in BLOCKED_EXTENSIONS
 
     return False
 
 
-def _save_uploaded_file(
-    file_storage,
-):
-    """
-    Save an uploaded file using a generated filename.
-
-    Returns:
-        (saved_path, original_filename)
-    """
-
+def _save_uploaded_file(file_storage):
     original_name = secure_filename(
-        file_storage.filename
-        or "uploaded_file"
+        file_storage.filename or "uploaded_file"
     )
 
     if not original_name:
         original_name = "uploaded_file"
 
-    generated_name = (
-        f"{uuid.uuid4().hex}_"
-        f"{original_name}"
-    )
+    generated_name = f"{uuid.uuid4().hex}_{original_name}"
+    saved_path = UPLOAD_DIR / generated_name
+    file_storage.save(saved_path)
 
-    saved_path = (
-        UPLOAD_DIR
-        / generated_name
-    )
-
-    file_storage.save(
-        saved_path
-    )
-
-    return (
-        saved_path,
-        original_name,
-    )
+    return saved_path, original_name
 
 
-def _remove_file(
-    path: Path,
-) -> None:
-    """
-    Best-effort temporary-file cleanup.
-    """
-
+def _remove_file(path: Path) -> None:
     try:
-
-        path.unlink(
-            missing_ok=True
-        )
-
+        path.unlink(missing_ok=True)
     except OSError:
-
         app.logger.warning(
             "Could not remove temporary file: %s",
             path,
@@ -537,16 +201,7 @@ def _handle_analyzer_error(
     analysis_type: str,
     error: Exception,
 ):
-    """
-    Convert an analyzer failure into a user-friendly response.
-
-    Detailed exception information remains in the server log.
-    """
-
-    app.logger.exception(
-        "%s analysis failed",
-        analysis_type,
-    )
+    app.logger.exception("%s analysis failed", analysis_type)
 
     flash(
         f"{analysis_type} analysis failed. "
@@ -554,100 +209,114 @@ def _handle_analyzer_error(
         "error",
     )
 
-    return redirect(
-        url_for("index")
-    )
+    return redirect(url_for("index"))
 
 
-# ---------------------------------------------------------------------------
-# Error handlers
-# ---------------------------------------------------------------------------
+# ============================================================
+# ERROR HANDLERS
+# ============================================================
 
-@app.errorhandler(
-    RequestEntityTooLarge
-)
-def handle_request_too_large(
-    error,
-):
-    """
-    Handle uploads larger than MAX_CONTENT_LENGTH.
-    """
-
+@app.errorhandler(RequestEntityTooLarge)
+def handle_request_too_large(error):
     flash(
-        "That file is too large. "
-        f"The maximum upload size is "
+        f"That file is too large. The maximum upload size is "
         f"{MAX_UPLOAD_MB} MB.",
         "error",
     )
-
-    return (
-        redirect(
-            url_for("index")
-        ),
-        413,
-    )
+    return redirect(url_for("index")), 413
 
 
 @app.errorhandler(400)
-def handle_bad_request(
-    error,
-):
-
+def handle_bad_request(error):
     flash(
         "The request could not be processed.",
         "error",
     )
-
-    return (
-        redirect(
-            url_for("index")
-        ),
-        400,
-    )
+    return redirect(url_for("index")), 400
 
 
 @app.errorhandler(404)
-def handle_not_found(
-    error,
-):
-
-    return redirect(
-        url_for("index")
-    )
+def handle_not_found(error):
+    return redirect(url_for("index"))
 
 
 @app.errorhandler(500)
-def handle_internal_error(
-    error,
-):
-    """
-    Avoid exposing Python tracebacks to the browser.
-    """
-
-    app.logger.exception(
-        "Unhandled application error"
-    )
+def handle_internal_error(error):
+    app.logger.exception("Unhandled application error")
 
     flash(
         "An unexpected application error occurred.",
         "error",
     )
 
-    return (
-        redirect(
-            url_for("index")
-        ),
-        500,
+    return redirect(url_for("index")), 500
+
+
+# ============================================================
+# AUTHENTICATION
+# ============================================================
+
+@app.before_request
+def require_toolkit_auth():
+    # Minimal health endpoint for deployment monitoring.
+    if request.path == "/health":
+        return None
+
+    # Authentication must be enabled explicitly in production.
+    if APP_ENV == "production" and (
+        os.environ.get("REQUIRE_AUTH", "").lower() != "true"
+    ):
+        app.logger.error(
+            "Production authentication is not enabled."
+        )
+        return "Service authentication is not configured.", 503
+
+    if os.environ.get("REQUIRE_AUTH", "false").lower() != "true":
+        return None
+
+    username = os.environ.get("TOOLKIT_USERNAME", "")
+    password = os.environ.get("TOOLKIT_PASSWORD", "")
+
+    if not username or not password:
+        app.logger.error(
+            "Authentication credentials are not configured."
+        )
+        return "Service authentication is not configured.", 503
+
+    credentials = request.authorization
+
+    valid = (
+        credentials is not None
+        and credentials.type.lower() == "basic"
+        and hmac.compare_digest(
+            credentials.username or "",
+            username,
+        )
+        and hmac.compare_digest(
+            credentials.password or "",
+            password,
+        )
     )
 
+    if not valid:
+        return (
+            "Authentication required.",
+            401,
+            {
+                "WWW-Authenticate":
+                    'Basic realm="Phishing Analysis Toolkit"'
+            },
+        )
 
-# ---------------------------------------------------------------------------
-# Dashboard route
-# ---------------------------------------------------------------------------
+    return None
+
+
+# ============================================================
+# MAIN DASHBOARD
+# ============================================================
 
 @app.route("/")
 def index():
-
     dashboard = _build_dashboard()
 
     return render_template(
@@ -656,314 +325,166 @@ def index():
     )
 
 
-# ---------------------------------------------------------------------------
-# Email analysis
-# ---------------------------------------------------------------------------
+# ============================================================
+# EMAIL ANALYSIS
+# ============================================================
 
-@app.route(
-    "/analyze/email",
-    methods=["POST"],
-)
+@app.route("/analyze/email", methods=["POST"])
 def analyze_email_route():
+    file = request.files.get("eml_file")
 
-    file = request.files.get(
-        "eml_file"
-    )
-
-    if (
-        not file
-        or not file.filename
-    ):
-
+    if not file or not file.filename:
         flash(
             "Please choose a .eml file to analyze.",
             "error",
         )
+        return redirect(url_for("index"))
 
-        return redirect(
-            url_for("index")
-        )
-
-    if not _allowed_file(
-        file.filename,
-        "email",
-    ):
-
+    if not _allowed_file(file.filename, "email"):
         flash(
-            "Only .eml files are accepted "
-            "for email analysis.",
+            "Only .eml files are accepted for email analysis.",
             "error",
         )
-
-        return redirect(
-            url_for("index")
-        )
+        return redirect(url_for("index"))
 
     saved_path = None
 
     try:
-
-        saved_path, original_name = (
-            _save_uploaded_file(file)
-        )
+        saved_path, original_name = _save_uploaded_file(file)
 
         app.logger.info(
             "Starting email analysis: %s",
             original_name,
         )
 
-        report = analyze_email(
-            str(saved_path)
-        )
-
-        # Display the original filename.
+        report = analyze_email(str(saved_path))
         report.target = original_name
 
-        return _render_result(
-            report
-        )
+        return _render_result(report)
 
     except Exception as exc:
-
-        return _handle_analyzer_error(
-            "Email",
-            exc,
-        )
+        return _handle_analyzer_error("Email", exc)
 
     finally:
-
         if saved_path:
-            _remove_file(
-                saved_path
-            )
+            _remove_file(saved_path)
 
 
-# ---------------------------------------------------------------------------
-# URL analysis
-# ---------------------------------------------------------------------------
+# ============================================================
+# URL ANALYSIS
+# ============================================================
 
-@app.route(
-    "/analyze/url",
-    methods=["POST"],
-)
+@app.route("/analyze/url", methods=["POST"])
 def analyze_url_route():
-
-    target = request.form.get(
-        "url",
-        "",
-    ).strip()
+    target = request.form.get("url", "").strip()
 
     if not target:
-
-        flash(
-            "Please enter a URL to analyze.",
-            "error",
-        )
-
-        return redirect(
-            url_for("index")
-        )
+        flash("Please enter a URL to analyze.", "error")
+        return redirect(url_for("index"))
 
     if len(target) > MAX_URL_LENGTH:
-
         flash(
-            "The URL is too long. "
-            f"Maximum length is "
+            f"The URL is too long. Maximum length is "
             f"{MAX_URL_LENGTH} characters.",
             "error",
         )
-
-        return redirect(
-            url_for("index")
-        )
+        return redirect(url_for("index"))
 
     try:
-
-        report = analyze_url(
-            target
-        )
-
-        return _render_result(
-            report
-        )
+        report = analyze_url(target)
+        return _render_result(report)
 
     except Exception as exc:
-
-        return _handle_analyzer_error(
-            "URL",
-            exc,
-        )
+        return _handle_analyzer_error("URL", exc)
 
 
-# ---------------------------------------------------------------------------
-# Attachment analysis
-# ---------------------------------------------------------------------------
+# ============================================================
+# ATTACHMENT ANALYSIS
+# ============================================================
 
-@app.route(
-    "/analyze/attachment",
-    methods=["POST"],
-)
+@app.route("/analyze/attachment", methods=["POST"])
 def analyze_attachment_route():
+    file = request.files.get("attachment_file")
 
-    file = request.files.get(
-        "attachment_file"
-    )
+    if not file or not file.filename:
+        flash("Please choose a file to analyze.", "error")
+        return redirect(url_for("index"))
 
-    if (
-        not file
-        or not file.filename
-    ):
-
+    if not _allowed_file(file.filename, "attachment"):
         flash(
-            "Please choose a file to analyze.",
+            "This file type is blocked by the dashboard upload policy.",
             "error",
         )
-
-        return redirect(
-            url_for("index")
-        )
-
-    if not _allowed_file(
-        file.filename,
-        "attachment",
-    ):
-
-        flash(
-            "This file type is blocked "
-            "by the dashboard upload policy.",
-            "error",
-        )
-
-        return redirect(
-            url_for("index")
-        )
+        return redirect(url_for("index"))
 
     saved_path = None
 
     try:
-
-        saved_path, original_name = (
-            _save_uploaded_file(file)
-        )
+        saved_path, original_name = _save_uploaded_file(file)
 
         app.logger.info(
             "Starting attachment analysis: %s",
             original_name,
         )
 
-        report = analyze_attachment(
-            str(saved_path)
-        )
-
-        # Keep the analyst-friendly filename.
+        report = analyze_attachment(str(saved_path))
         report.target = original_name
 
-        return _render_result(
-            report
-        )
+        return _render_result(report)
 
     except Exception as exc:
-
-        return _handle_analyzer_error(
-            "Attachment",
-            exc,
-        )
+        return _handle_analyzer_error("Attachment", exc)
 
     finally:
-
         if saved_path:
-            _remove_file(
-                saved_path
-            )
+            _remove_file(saved_path)
 
 
-# ---------------------------------------------------------------------------
-# Domain analysis
-# ---------------------------------------------------------------------------
+# ============================================================
+# DOMAIN ANALYSIS
+# ============================================================
 
-@app.route(
-    "/analyze/domain",
-    methods=["POST"],
-)
+@app.route("/analyze/domain", methods=["POST"])
 def analyze_domain_route():
-
-    target = request.form.get(
-        "domain",
-        "",
-    ).strip()
+    target = request.form.get("domain", "").strip()
 
     if not target:
-
-        flash(
-            "Please enter a domain to analyze.",
-            "error",
-        )
-
-        return redirect(
-            url_for("index")
-        )
+        flash("Please enter a domain to analyze.", "error")
+        return redirect(url_for("index"))
 
     if len(target) > MAX_DOMAIN_LENGTH:
-
         flash(
-            "The domain is too long. "
-            f"Maximum length is "
+            f"The domain is too long. Maximum length is "
             f"{MAX_DOMAIN_LENGTH} characters.",
             "error",
         )
-
-        return redirect(
-            url_for("index")
-        )
+        return redirect(url_for("index"))
 
     try:
-
-        report = analyze_domain(
-            target
-        )
-
-        return _render_result(
-            report
-        )
+        report = analyze_domain(target)
+        return _render_result(report)
 
     except Exception as exc:
-
-        return _handle_analyzer_error(
-            "Domain",
-            exc,
-        )
+        return _handle_analyzer_error("Domain", exc)
 
 
-# ---------------------------------------------------------------------------
-# JSON report export
-# ---------------------------------------------------------------------------
+# ============================================================
+# JSON REPORT EXPORT
+# ============================================================
 
-@app.route(
-    "/report/<report_id>/json"
-)
-def download_report_json(
-    report_id,
-):
+@app.route("/report/<report_id>/json")
+def download_report_json(report_id):
+    report = _get_cached_report(report_id)
 
-    report = _get_cached_report(
-        report_id
-    )
-
-    # Fall back to SQLite when the in-memory cache no longer
-    # contains the requested report.
     if report is not None:
         try:
             data = report.to_dict()
         except Exception as exc:
-            return _handle_analyzer_error(
-                "Report export",
-                exc,
-            )
+            return _handle_analyzer_error("Report export", exc)
+
     else:
         try:
-            stored = get_analysis_by_report_id(
-                report_id
-            )
+            stored = get_analysis_by_report_id(report_id)
         except Exception:
             app.logger.exception(
                 "Failed to retrieve report %s from SQLite",
@@ -973,118 +494,199 @@ def download_report_json(
 
         if stored is None:
             flash(
-                "That report has expired "
-                "or was never generated.",
+                "That report has expired or was never generated.",
                 "error",
             )
-
-            return redirect(
-                url_for("index")
-            )
+            return redirect(url_for("index"))
 
         data = stored["report"]
 
-
-    response = jsonify(
-        data
-    )
-
-    response.headers[
-        "Content-Disposition"
-    ] = (
-        f'attachment; '
-        f'filename="analysis-'
-        f'{report_id}.json"'
+    response = jsonify(data)
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="analysis-{report_id}.json"'
     )
 
     return response
 
 
-# ---------------------------------------------------------------------------
-# Health/status endpoint
-# ---------------------------------------------------------------------------
+# ============================================================
+# HEALTH CHECK
+# ============================================================
 
 @app.route("/health")
 def health():
-    """
-    Lightweight local health check.
+    return jsonify({
+        "status": "ok",
+        "service": "phishing-analysis-toolkit",
+    })
 
-    Useful for debugging the dashboard and future
-    frontend integration.
-    """
+
+# ============================================================
+# INCIDENT RESPONSE AND THREAT INTELLIGENCE API
+# ============================================================
+
+@app.route("/api/irt/overview")
+def irt_overview():
+    try:
+        dashboard = get_dashboard_stats()
+        recent = list_recent_analyses(10)
+
+        return jsonify({
+            "service": "phishing-analysis-toolkit",
+            "module": "incident-response-and-threat-intelligence",
+            "status": "ok",
+            "statistics": dashboard,
+            "recent_analyses": recent,
+        })
+
+    except Exception:
+        app.logger.exception("IRT overview failed")
+
+        return jsonify({
+            "status": "error",
+            "message": "Unable to retrieve incident response overview.",
+        }), 500
+
+
+@app.route("/api/irt/cases", methods=["GET"])
+def irt_list_cases():
+    try:
+        raw_limit = request.args.get("limit", "50")
+
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return jsonify({
+                "status": "error",
+                "message": "Limit must be an integer.",
+            }), 400
+
+        if not 1 <= limit <= 100:
+            return jsonify({
+                "status": "error",
+                "message": "Limit must be between 1 and 100.",
+            }), 400
+
+        cases = list_cases(limit)
+
+        return jsonify({
+            "status": "ok",
+            "count": len(cases),
+            "cases": cases,
+        })
+
+    except Exception:
+        app.logger.exception("IRT case listing failed")
+
+        return jsonify({
+            "status": "error",
+            "message": "Unable to retrieve cases.",
+        }), 500
+
+
+@app.route("/api/irt/cases/<int:case_id>", methods=["GET"])
+def irt_get_case(case_id):
+    try:
+        case = get_case_by_id(case_id)
+
+        if case is None:
+            return jsonify({
+                "status": "error",
+                "message": "Case not found.",
+            }), 404
+
+        return jsonify({
+            "status": "ok",
+            "case": case,
+        })
+
+    except Exception:
+        app.logger.exception("IRT case retrieval failed")
+
+        return jsonify({
+            "status": "error",
+            "message": "Unable to retrieve case.",
+        }), 500
+
+
+@app.route("/api/irt/cases/<int:case_id>", methods=["PATCH"])
+def irt_update_case(case_id):
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict) or not data:
+        return jsonify({
+            "status": "error",
+            "message": "Provide a non-empty JSON object.",
+        }), 400
+
+    allowed_fields = {
+        "status",
+        "priority",
+        "analyst_notes",
+    }
+
+    if set(data) - allowed_fields:
+        return jsonify({
+            "status": "error",
+            "message": "Unsupported fields provided.",
+        }), 400
+
+    if any(not isinstance(value, str) for value in data.values()):
+        return jsonify({
+            "status": "error",
+            "message": "All field values must be strings.",
+        }), 400
 
     try:
-        database = get_database_stats()
-        database_status = "ok"
-    except Exception:
-        app.logger.exception(
-            "Database health check failed"
+        case = update_case(
+            case_id,
+            status=data.get("status"),
+            priority=data.get("priority"),
+            analyst_notes=data.get("analyst_notes"),
         )
-        database = {}
-        database_status = "error"
 
-    return jsonify(
-        {
-            "status": "ok" if database_status == "ok" else "degraded",
-            "service": (
-                "phishing-analysis-toolkit"
-            ),
-            "reports_cached": len(
-                _REPORT_CACHE
-            ),
-            "cache_limit": CACHE_LIMIT,
-            "database_status": database_status,
-            "database": database,
-        }
-    )
+        if case is None:
+            return jsonify({
+                "status": "error",
+                "message": "Case not found.",
+            }), 404
+
+        return jsonify({
+            "status": "ok",
+            "message": "Case updated successfully.",
+            "case": case,
+        })
+
+    except ValueError as error:
+        return jsonify({
+            "status": "error",
+            "message": str(error),
+        }), 400
+
+    except Exception:
+        app.logger.exception("IRT case update failed")
+
+        return jsonify({
+            "status": "error",
+            "message": "Unable to update case.",
+        }), 500
 
 
-# ---------------------------------------------------------------------------
-# Application startup
-# ---------------------------------------------------------------------------
+# ============================================================
+# LOCAL DEVELOPMENT SERVER
+# ============================================================
 
 if __name__ == "__main__":
-
-    host = os.environ.get(
-        "HOST",
-        "127.0.0.1",
-    )
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            "5000",
-        )
-    )
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "5000"))
 
     debug = (
-        os.environ
-        .get(
-            "FLASK_DEBUG",
-            "true",
-        )
-        .lower()
-        == "true"
+        os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     )
 
-    if (
-        host != "127.0.0.1"
-        and debug
-    ):
-
-        print(
-            "\n"
-            "============================================================\n"
-            " WARNING\n"
-            "============================================================\n"
-            " Flask debug mode is enabled while the application is\n"
-            " listening on a non-localhost address.\n"
-            "\n"
-            " The interactive debugger should not be exposed to other\n"
-            " machines.\n"
-            "\n"
-            " Set FLASK_DEBUG=false before using a non-localhost HOST.\n"
-            "============================================================\n"
+    if host != "127.0.0.1" and debug:
+        raise RuntimeError(
+            "Debug mode must not be enabled on a non-localhost address."
         )
 
     print(
@@ -1097,6 +699,8 @@ if __name__ == "__main__":
         f" Report cache: {CACHE_LIMIT}\n"
         f" Debug:        {debug}\n"
         " Dashboard:    Analyst Overview\n"
+        " IRT API:      /api/irt/overview\n"
+        " IRT Cases:    /api/irt/cases\n"
         "============================================================\n"
     )
 

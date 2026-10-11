@@ -1,16 +1,14 @@
-{% extends "base.html" %}
-{% block content %}
 
-<!-- =========================================================
-     ANALYST OVERVIEW
-     ========================================================= -->
+{% extends "base.html" %}
+
+{% block title %}Analyst Overview | Phishing Analysis Toolkit{% endblock %}
+
+{% block content %}
 
 <section class="dashboard-header">
     <div>
         <p class="eyebrow">PHISHING ANALYSIS TOOLKIT</p>
-
         <h1>Analyst Overview</h1>
-
         <p class="dashboard-subtitle">
             Monitor recent phishing-analysis activity, risk levels,
             and extracted indicators from this analyst session.
@@ -24,9 +22,7 @@
 </section>
 
 
-<!-- =========================================================
-     SUMMARY CARDS
-     ========================================================= -->
+<!-- SUMMARY CARDS -->
 
 <section class="dashboard-grid">
 
@@ -39,7 +35,7 @@
     <div class="summary-card danger-card">
         <div class="summary-card-label">HIGH RISK</div>
         <div class="summary-card-value">{{ dashboard.high }}</div>
-        <div class="summary-card-note">Risk score ≥ 70</div>
+        <div class="summary-card-note">Risk score 70 and above</div>
     </div>
 
     <div class="summary-card warning-card">
@@ -57,14 +53,11 @@
 </section>
 
 
-<!-- =========================================================
-     ANALYSIS BREAKDOWN + IOC SUMMARY
-     ========================================================= -->
+<!-- ANALYSIS BREAKDOWN AND IOC SUMMARY -->
 
 <section class="dashboard-columns">
 
     <div class="dashboard-panel">
-
         <div class="panel-heading">
             <div>
                 <p class="eyebrow">ACTIVITY</p>
@@ -76,70 +69,49 @@
 
             <div class="breakdown-row">
                 <span>Email</span>
-
                 <div class="breakdown-track">
-                    <div
-                        class="breakdown-fill"
-                        style="width: {{ dashboard.percent_email }}%;">
+                    <div class="breakdown-fill"
+                         data-width="{{ dashboard.percent_email | default(0) | int }}">
                     </div>
                 </div>
-
                 <strong>{{ dashboard.email }}</strong>
             </div>
 
-
             <div class="breakdown-row">
                 <span>URL</span>
-
                 <div class="breakdown-track">
-                    <div
-                        class="breakdown-fill"
-                        style="width: {{ dashboard.percent_url }}%;">
+                    <div class="breakdown-fill"
+                         data-width="{{ dashboard.percent_url | default(0) | int }}">
                     </div>
                 </div>
-
                 <strong>{{ dashboard.url }}</strong>
             </div>
 
-
             <div class="breakdown-row">
                 <span>Domain</span>
-
                 <div class="breakdown-track">
-                    <div
-                        class="breakdown-fill"
-                        style="width: {{ dashboard.percent_domain }}%;">
+                    <div class="breakdown-fill"
+                         data-width="{{ dashboard.percent_domain | default(0) | int }}">
                     </div>
                 </div>
-
                 <strong>{{ dashboard.domain }}</strong>
             </div>
 
-
             <div class="breakdown-row">
                 <span>Attachment</span>
-
                 <div class="breakdown-track">
-                    <div
-                        class="breakdown-fill"
-                        style="width: {{ dashboard.percent_attachment }}%;">
+                    <div class="breakdown-fill"
+                         data-width="{{ dashboard.percent_attachment | default(0) | int }}">
                     </div>
                 </div>
-
                 <strong>{{ dashboard.attachment }}</strong>
             </div>
 
         </div>
-
     </div>
 
 
-    <!-- =====================================================
-         IOC SUMMARY
-         ===================================================== -->
-
     <div class="dashboard-panel">
-
         <div class="panel-heading">
             <div>
                 <p class="eyebrow">INDICATORS</p>
@@ -150,92 +122,55 @@
         <div class="ioc-dashboard-grid">
 
             <div class="ioc-stat">
-                <span class="ioc-stat-number">
-                    {{ dashboard.ioc_urls }}
-                </span>
-
-                <span class="ioc-stat-label">
-                    URLs
-                </span>
+                <span class="ioc-stat-number">{{ dashboard.ioc_urls }}</span>
+                <span class="ioc-stat-label">URLs</span>
             </div>
 
-
             <div class="ioc-stat">
-                <span class="ioc-stat-number">
-                    {{ dashboard.ioc_domains }}
-                </span>
-
-                <span class="ioc-stat-label">
-                    Domains
-                </span>
+                <span class="ioc-stat-number">{{ dashboard.ioc_domains }}</span>
+                <span class="ioc-stat-label">Domains</span>
             </div>
 
-
             <div class="ioc-stat">
-                <span class="ioc-stat-number">
-                    {{ dashboard.ioc_ips }}
-                </span>
-
-                <span class="ioc-stat-label">
-                    IP Addresses
-                </span>
+                <span class="ioc-stat-number">{{ dashboard.ioc_ips }}</span>
+                <span class="ioc-stat-label">IP Addresses</span>
             </div>
 
-
             <div class="ioc-stat">
-                <span class="ioc-stat-number">
-                    {{ dashboard.ioc_emails }}
-                </span>
-
-                <span class="ioc-stat-label">
-                    Emails
-                </span>
+                <span class="ioc-stat-number">{{ dashboard.ioc_emails }}</span>
+                <span class="ioc-stat-label">Emails</span>
             </div>
 
-
             <div class="ioc-stat">
-                <span class="ioc-stat-number">
-                    {{ dashboard.ioc_hashes }}
-                </span>
-
-                <span class="ioc-stat-label">
-                    File Hashes
-                </span>
+                <span class="ioc-stat-number">{{ dashboard.ioc_hashes }}</span>
+                <span class="ioc-stat-label">File Hashes</span>
             </div>
 
         </div>
-
     </div>
 
 </section>
 
 
-<!-- =========================================================
-     RECENT ANALYSES
-     ========================================================= -->
+<!-- RECENT ANALYSES -->
 
 <section class="dashboard-panel recent-panel">
 
     <div class="panel-heading">
-
         <div>
             <p class="eyebrow">CASE ACTIVITY</p>
             <h2>Recent Analyses</h2>
         </div>
 
         <span class="panel-count">
-            {{ dashboard.recent|length }} recent
+            {{ dashboard.recent | length }} recent
         </span>
-
     </div>
-
 
     {% if dashboard.recent %}
 
     <div class="recent-table-wrapper">
-
         <table class="recent-table">
-
             <thead>
                 <tr>
                     <th>Type</th>
@@ -247,27 +182,19 @@
             </thead>
 
             <tbody>
-
                 {% for item in dashboard.recent %}
-
                 <tr>
-
                     <td>
                         <span class="analysis-type">
                             {{ item.analysis_type }}
                         </span>
                     </td>
 
-
                     <td>
-                        <code class="target-name">
-                            {{ item.target }}
-                        </code>
+                        <code class="target-name">{{ item.target }}</code>
                     </td>
 
-
                     <td>
-
                         <span class="risk-badge
                             {% if item.risk_score >= 70 %}
                                 risk-high
@@ -278,48 +205,23 @@
                             {% else %}
                                 risk-clean
                             {% endif %}
-                        ">
-
-                            {{ item.risk_score }}/100
-
-                        </span>
-
+                        ">{{ item.risk_score }}/100</span>
                     </td>
 
-
-                    <td>
-                        {{ item.confidence_percent }}%
-                    </td>
-
-
-                    <td>
-                        {{ item.finding_count }}
-                    </td>
-
+                    <td>{{ item.confidence_percent }}</td>
+                    <td>{{ item.finding_count }}</td>
                 </tr>
-
                 {% endfor %}
-
             </tbody>
-
         </table>
-
     </div>
 
     {% else %}
 
     <div class="empty-dashboard">
-
-        <div class="empty-dashboard-icon">
-            +
-        </div>
-
+        <div class="empty-dashboard-icon">+</div>
         <h3>No analyses yet</h3>
-
-        <p>
-            Run your first analysis below.
-        </p>
-
+        <p>Run your first analysis below.</p>
     </div>
 
     {% endif %}
@@ -327,439 +229,245 @@
 </section>
 
 
-<!-- =========================================================
-     SINGLE ANALYSIS INTERFACE
-     ========================================================= -->
+<!-- NEW ANALYSIS -->
 
 <section class="analysis-intake">
 
     <div class="intake-heading">
-
-        <p class="eyebrow">
-            NEW INVESTIGATION
-        </p>
-
-        <h2>
-            Run an Analysis
-        </h2>
-
+        <p class="eyebrow">NEW INVESTIGATION</p>
+        <h2>Run an Analysis</h2>
         <p class="intake-lede">
             Submit a suspicious URL, domain, email, or attachment
-            for static analysis.
+            for analysis.
         </p>
-
     </div>
-
-
-    <!-- =====================================================
-         UNIFIED ANALYSIS PANEL
-         ===================================================== -->
 
     <div class="single-analysis-panel">
 
         <div class="analysis-type-selector">
-
-            <label for="analysisType">
-                ANALYSIS TYPE
-            </label>
+            <label for="analysisType">ANALYSIS TYPE</label>
 
             <select id="analysisType">
-
-                <option value="email">
-                    Email
-                </option>
-
-                <option value="url">
-                    URL
-                </option>
-
-                <option value="attachment">
-                    Attachment
-                </option>
-
-                <option value="domain">
-                    Domain
-                </option>
-
+                <option value="email">Email</option>
+                <option value="url">URL</option>
+                <option value="attachment">Attachment</option>
+                <option value="domain">Domain</option>
             </select>
-
         </div>
 
 
-        <!-- =================================================
-             EMAIL
-             ================================================= -->
+        <!-- EMAIL -->
 
-        <div
-            class="analysis-input-panel"
-            id="input-email">
-
-            <form
-                action="{{ url_for('analyze_email_route') }}"
-                method="post"
-                enctype="multipart/form-data">
+        <div class="analysis-input-panel" id="input-email">
+            <form action="{{ url_for('analyze_email_route') }}"
+                  method="post"
+                  enctype="multipart/form-data">
 
                 <div class="analysis-input-header">
-
                     <div>
-                        <span class="input-label">
-                            EMAIL EVIDENCE
-                        </span>
-
-                        <h3>
-                            Upload the original email
-                        </h3>
-
+                        <span class="input-label">EMAIL EVIDENCE</span>
+                        <h3>Upload the original email</h3>
                         <p>
-                            Use the original <code>.eml</code> file.
+                            Use the original .eml file.
                             Screenshots and copied text are not supported.
                         </p>
                     </div>
-
                 </div>
-
 
                 <label class="file-drop">
-
-                    <input
-                        type="file"
-                        name="eml_file"
-                        accept=".eml"
-                        required>
+                    <input type="file"
+                           name="eml_file"
+                           accept=".eml"
+                           required>
 
                     <span class="file-drop-label">
-
-                        <strong>
-                            Choose .eml file
-                        </strong>
-
-                        <span>
-                            Original email file only
-                        </span>
-
+                        <strong>Choose .eml file</strong>
+                        <span>Original email file only</span>
                     </span>
-
                 </label>
 
-
-                <button
-                    type="submit"
-                    class="btn-submit">
-
+                <button type="submit" class="btn-submit">
                     Run analysis
-
                 </button>
-
             </form>
-
         </div>
 
 
-        <!-- =================================================
-             URL
-             ================================================= -->
+        <!-- URL -->
 
-        <div
-            class="analysis-input-panel"
-            id="input-url"
-            hidden>
-
-            <form
-                action="{{ url_for('analyze_url_route') }}"
-                method="post">
+        <div class="analysis-input-panel" id="input-url" hidden>
+            <form action="{{ url_for('analyze_url_route') }}"
+                  method="post">
 
                 <div class="analysis-input-header">
-
                     <div>
-                        <span class="input-label">
-                            URL EVIDENCE
-                        </span>
-
-                        <h3>
-                            Analyze a suspicious link
-                        </h3>
-
+                        <span class="input-label">URL EVIDENCE</span>
+                        <h3>Analyze a suspicious link</h3>
                         <p>
-                            The URL is analyzed as text only.
-                            It is never opened or visited.
+                            Submit the URL as text for analysis.
                         </p>
                     </div>
-
                 </div>
 
+                <input type="url"
+                       name="url"
+                       class="text-input"
+                       placeholder="https://suspicious-example.com/login"
+                       required>
 
-                <input
-                    type="url"
-                    name="url"
-                    class="text-input"
-                    placeholder="https://suspicious-example.com/login"
-                    required>
-
-
-                <button
-                    type="submit"
-                    class="btn-submit">
-
+                <button type="submit" class="btn-submit">
                     Run analysis
-
                 </button>
-
             </form>
-
         </div>
 
 
-        <!-- =================================================
-             ATTACHMENT
-             ================================================= -->
+        <!-- ATTACHMENT -->
 
-        <div
-            class="analysis-input-panel"
-            id="input-attachment"
-            hidden>
-
-            <form
-                action="{{ url_for('analyze_attachment_route') }}"
-                method="post"
-                enctype="multipart/form-data">
+        <div class="analysis-input-panel" id="input-attachment" hidden>
+            <form action="{{ url_for('analyze_attachment_route') }}"
+                  method="post"
+                  enctype="multipart/form-data">
 
                 <div class="analysis-input-header">
-
                     <div>
-                        <span class="input-label">
-                            FILE EVIDENCE
-                        </span>
-
-                        <h3>
-                            Analyze a suspicious attachment
-                        </h3>
-
+                        <span class="input-label">FILE EVIDENCE</span>
+                        <h3>Analyze a suspicious attachment</h3>
                         <p>
-                            The file is hashed and inspected statically.
-                            It is never opened or executed.
+                            Submit a file for static inspection.
+                            Only upload files you are authorized to analyze.
                         </p>
                     </div>
-
                 </div>
-
 
                 <label class="file-drop">
-
-                    <input
-                        type="file"
-                        name="attachment_file"
-                        required>
+                    <input type="file"
+                           name="attachment_file"
+                           required>
 
                     <span class="file-drop-label">
-
-                        <strong>
-                            Choose file
-                        </strong>
-
-                        <span>
-                            File will be statically inspected
-                        </span>
-
+                        <strong>Choose file</strong>
+                        <span>File selected for static inspection</span>
                     </span>
-
                 </label>
 
-
-                <button
-                    type="submit"
-                    class="btn-submit">
-
+                <button type="submit" class="btn-submit">
                     Run analysis
-
                 </button>
-
             </form>
-
         </div>
 
 
-        <!-- =================================================
-             DOMAIN
-             ================================================= -->
+        <!-- DOMAIN -->
 
-        <div
-            class="analysis-input-panel"
-            id="input-domain"
-            hidden>
-
-            <form
-                action="{{ url_for('analyze_domain_route') }}"
-                method="post">
+        <div class="analysis-input-panel" id="input-domain" hidden>
+            <form action="{{ url_for('analyze_domain_route') }}"
+                  method="post">
 
                 <div class="analysis-input-header">
-
                     <div>
-                        <span class="input-label">
-                            DOMAIN EVIDENCE
-                        </span>
-
-                        <h3>
-                            Analyze a suspicious domain
-                        </h3>
-
+                        <span class="input-label">DOMAIN EVIDENCE</span>
+                        <h3>Analyze a suspicious domain</h3>
                         <p>
                             Uses WHOIS and DNS information.
-                            Internet access is required for this analysis.
+                            Internet access may be required.
                         </p>
-
                     </div>
-
                 </div>
 
+                <input type="text"
+                       name="domain"
+                       class="text-input"
+                       placeholder="suspicious-domain.com"
+                       required>
 
-                <input
-                    type="text"
-                    name="domain"
-                    class="text-input"
-                    placeholder="suspicious-domain.com"
-                    required>
-
-
-                <button
-                    type="submit"
-                    class="btn-submit">
-
+                <button type="submit" class="btn-submit">
                     Run analysis
-
                 </button>
-
             </form>
-
         </div>
 
     </div>
-
 </section>
 
 
-<!-- =========================================================
-     UNIFIED ANALYSIS JAVASCRIPT
-     ========================================================= -->
-
 <script>
+"use strict";
 
-const analysisType = document.getElementById("analysisType");
+document.addEventListener("DOMContentLoaded", function () {
 
-const inputPanels = {
-    email: document.getElementById("input-email"),
-    url: document.getElementById("input-url"),
-    attachment: document.getElementById("input-attachment"),
-    domain: document.getElementById("input-domain")
-};
+    const analysisType = document.getElementById("analysisType");
 
+    const inputPanels = {
+        email: document.getElementById("input-email"),
+        url: document.getElementById("input-url"),
+        attachment: document.getElementById("input-attachment"),
+        domain: document.getElementById("input-domain")
+    };
 
-function switchAnalysisType(type) {
+    // Set the analysis breakdown bars.
+    document.querySelectorAll(".breakdown-fill").forEach(function (bar) {
+        const parsed = Number.parseInt(bar.dataset.width, 10);
+        const width = Number.isFinite(parsed) ? parsed : 0;
 
-    Object.entries(inputPanels).forEach(
-        ([name, panel]) => {
-
-            panel.hidden = name !== type;
-
-            const form = panel.querySelector("form");
-
-            if (!form) {
-                return;
-            }
-
-            /*
-             * Prevent hidden forms from submitting stale
-             * required fields.
-             */
-
-            form.querySelectorAll("input").forEach(
-                input => {
-
-                    if (
-                        input.type === "file" ||
-                        input.type === "url" ||
-                        input.type === "text"
-                    ) {
-                        input.disabled = name !== type;
-                    }
-
-                }
-            );
-
-        }
-    );
-
-}
-
-
-analysisType.addEventListener(
-    "change",
-    () => {
-
-        switchAnalysisType(
-            analysisType.value
-        );
-
-    }
-);
-
-
-/*
- * Show selected filename.
- */
-
-document
-    .querySelectorAll('input[type="file"]')
-    .forEach(input => {
-
-        input.addEventListener(
-            "change",
-            () => {
-
-                const label =
-                    input
-                        .closest(".file-drop")
-                        .querySelector(
-                            ".file-drop-label"
-                        );
-
-                if (input.files.length) {
-
-                    label.innerHTML = `
-                        <strong>
-                            ${input.files[0].name}
-                        </strong>
-
-                        <span>
-                            File selected
-                        </span>
-                    `;
-
-                } else {
-
-                    label.innerHTML = `
-                        <strong>
-                            Choose file
-                        </strong>
-
-                        <span>
-                            Select evidence for analysis
-                        </span>
-                    `;
-
-                }
-
-            }
-        );
-
+        bar.style.width = Math.min(100, Math.max(0, width)) + "%";
     });
 
+    // Show only the selected analysis form.
+    function switchAnalysisType(type) {
+        Object.entries(inputPanels).forEach(function ([name, panel]) {
+            if (!panel) return;
 
-/*
- * Initialize the dashboard with Email selected.
- */
+            const active = name === type;
+            panel.hidden = !active;
 
-switchAnalysisType("email");
+            const form = panel.querySelector("form");
+            if (!form) return;
 
+            form.querySelectorAll(
+                "input, select, textarea, button"
+            ).forEach(function (control) {
+                control.disabled = !active;
+            });
+        });
+    }
+
+    if (analysisType) {
+        analysisType.addEventListener("change", function () {
+            switchAnalysisType(analysisType.value);
+        });
+
+        switchAnalysisType(analysisType.value);
+    }
+
+    // Update file labels after a file is selected.
+    document.querySelectorAll(
+        '.file-drop input[type="file"]'
+    ).forEach(function (input) {
+
+        input.addEventListener("change", function () {
+            const wrapper = input.closest(".file-drop");
+            const title = wrapper.querySelector("strong");
+            const description = wrapper.querySelector("span");
+
+            if (input.files && input.files.length > 0) {
+                title.textContent = input.files[0].name;
+                description.textContent = "File selected";
+            } else {
+                title.textContent =
+                    input.accept === ".eml"
+                        ? "Choose .eml file"
+                        : "Choose file";
+
+                description.textContent =
+                    input.accept === ".eml"
+                        ? "Original email file only"
+                        : "Select evidence for analysis";
+            }
+        });
+    });
+
+});
 </script>
 
 {% endblock %}
