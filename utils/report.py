@@ -364,20 +364,10 @@ class AnalysisReport:
 
             print()
 
-    def export_json(self, path: str):
+    def export_json(self, path: str) -> None:
         """Export the complete report as formatted JSON."""
 
-        with open(
-            path,
-            "w",
-            encoding="utf-8",
-        ) as fh:
-            json.dump(
-                self.to_dict(),
-                fh,
-                indent=2,
-            )
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(self.to_dict(), fh, indent=2, ensure_ascii=False)
 
-        print(
-            f"Report exported to {path}"
-        )
+        print(f"Report exported to {path}")
