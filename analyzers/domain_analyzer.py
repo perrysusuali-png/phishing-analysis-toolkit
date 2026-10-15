@@ -131,12 +131,8 @@ def analyze_domain(domain):
     if virustotal_analyzer.is_configured():
         try:
             vt_result = virustotal_analyzer.check_domain(domain)
-            virustotal_analyzer.add_vt_finding(report, vt_result)
+            virustotal_analyzer.add_vt_finding(report, vt_result, "Domain")
         except Exception as exc:
-            report.add(
-                f"VirusTotal domain lookup failed: {exc}",
-                0,
-                "info",
-            )
+            report.add(f"VirusTotal domain lookup failed: {exc}", 0, "info")
 
     return report
