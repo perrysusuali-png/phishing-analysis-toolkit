@@ -25,6 +25,10 @@ templates/index_before_irt.html
 
 # Development scripts and tests
 integrate_*.py
-test_database_integration.py
-test_report_export.py
 app_working_before_database_integration.py
+
+test_backups/
+
+# Flutter SDK and downloaded archive
+/src/flutter/
+/flutter_windows_3.47.7-stable.zip

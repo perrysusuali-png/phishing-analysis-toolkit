@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import uuid
 from collections import OrderedDict
 from pathlib import Path
@@ -38,11 +39,6 @@ from utils.database import (
     update_case,
 )
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -62,6 +58,31 @@ if not app.secret_key:
         )
 
     app.secret_key = "dev-only-change-me"
+
+
+@app.after_request
+def add_local_development_cors(response):
+    origin = request.headers.get("Origin", "")
+
+    if (
+        APP_ENV != "production"
+        and re.fullmatch(
+            r"http://(?:localhost|127\.0\.0\.1):[0-9]{1,5}",
+            origin,
+        )
+    ):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = (
+            "GET, POST, PATCH, OPTIONS"
+        )
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, Authorization"
+        )
+        response.headers["Access-Control-Max-Age"] = "600"
+
+    return response
+
 
 init_database()
 
@@ -103,10 +124,6 @@ BLOCKED_EXTENSIONS = {
 
 _REPORT_CACHE: OrderedDict[str, object] = OrderedDict()
 
-
-# ============================================================
-# DATABASE AND REPORT HELPERS
-# ============================================================
 
 def _cache_report(report) -> str:
     report_id = uuid.uuid4().hex[:12]
@@ -212,12 +229,17 @@ def _handle_analyzer_error(
     return redirect(url_for("index"))
 
 
-# ============================================================
-# ERROR HANDLERS
-# ============================================================
-
 @app.errorhandler(RequestEntityTooLarge)
 def handle_request_too_large(error):
+    if request.path.startswith("/api/"):
+        return jsonify({
+            "status": "error",
+            "message": (
+                f"Request too large. Maximum upload size is "
+                f"{MAX_UPLOAD_MB} MB."
+            ),
+        }), 413
+
     flash(
         f"That file is too large. The maximum upload size is "
         f"{MAX_UPLOAD_MB} MB.",
@@ -228,6 +250,12 @@ def handle_request_too_large(error):
 
 @app.errorhandler(400)
 def handle_bad_request(error):
+    if request.path.startswith("/api/"):
+        return jsonify({
+            "status": "error",
+            "message": "The request could not be processed.",
+        }), 400
+
     flash(
         "The request could not be processed.",
         "error",
@@ -237,12 +265,24 @@ def handle_bad_request(error):
 
 @app.errorhandler(404)
 def handle_not_found(error):
+    if request.path.startswith("/api/"):
+        return jsonify({
+            "status": "error",
+            "message": "API endpoint not found.",
+        }), 404
+
     return redirect(url_for("index"))
 
 
 @app.errorhandler(500)
 def handle_internal_error(error):
     app.logger.exception("Unhandled application error")
+
+    if request.path.startswith("/api/"):
+        return jsonify({
+            "status": "error",
+            "message": "An unexpected application error occurred.",
+        }), 500
 
     flash(
         "An unexpected application error occurred.",
@@ -252,17 +292,14 @@ def handle_internal_error(error):
     return redirect(url_for("index")), 500
 
 
-# ============================================================
-# AUTHENTICATION
-# ============================================================
-
 @app.before_request
 def require_toolkit_auth():
-    # Minimal health endpoint for deployment monitoring.
+    if request.method == "OPTIONS":
+        return None
+
     if request.path == "/health":
         return None
 
-    # Authentication must be enabled explicitly in production.
     if APP_ENV == "production" and (
         os.environ.get("REQUIRE_AUTH", "").lower() != "true"
     ):
@@ -311,10 +348,6 @@ def require_toolkit_auth():
     return None
 
 
-# ============================================================
-# MAIN DASHBOARD
-# ============================================================
-
 @app.route("/")
 def index():
     dashboard = _build_dashboard()
@@ -324,10 +357,6 @@ def index():
         dashboard=dashboard,
     )
 
-
-# ============================================================
-# EMAIL ANALYSIS
-# ============================================================
 
 @app.route("/analyze/email", methods=["POST"])
 def analyze_email_route():
@@ -370,10 +399,6 @@ def analyze_email_route():
             _remove_file(saved_path)
 
 
-# ============================================================
-# URL ANALYSIS
-# ============================================================
-
 @app.route("/analyze/url", methods=["POST"])
 def analyze_url_route():
     target = request.form.get("url", "").strip()
@@ -398,9 +423,172 @@ def analyze_url_route():
         return _handle_analyzer_error("URL", exc)
 
 
-# ============================================================
-# ATTACHMENT ANALYSIS
-# ============================================================
+@app.route("/api/analyze/url", methods=["POST"])
+def api_analyze_url():
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({
+            "status": "error",
+            "message": "Provide a JSON object containing a URL.",
+        }), 400
+
+    target = data.get("url")
+
+    if not isinstance(target, str) or not target.strip():
+        return jsonify({
+            "status": "error",
+            "message": "A non-empty URL is required.",
+        }), 400
+
+    target = target.strip()
+
+    if len(target) > MAX_URL_LENGTH:
+        return jsonify({
+            "status": "error",
+            "message": (
+                f"The URL must not exceed "
+                f"{MAX_URL_LENGTH} characters."
+            ),
+        }), 400
+
+    try:
+        report = analyze_url(target)
+        report_id = _cache_report(report)
+
+        try:
+            save_analysis(report, report_id=report_id)
+        except Exception:
+            app.logger.exception(
+                "Failed to persist mobile analysis report %s",
+                report_id,
+            )
+
+        return jsonify({
+            "status": "ok",
+            "report_id": report_id,
+            "report": report.to_dict(),
+        }), 200
+
+    except Exception:
+        app.logger.exception("Mobile URL analysis failed")
+
+        return jsonify({
+            "status": "error",
+            "message": "Unable to analyze the URL.",
+        }), 500
+
+
+@app.route("/api/analyze/domain", methods=["POST"])
+def api_analyze_domain():
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({
+            "status": "error",
+            "message": "Provide a JSON object containing a domain.",
+        }), 400
+
+    target = data.get("domain")
+
+    if not isinstance(target, str) or not target.strip():
+        return jsonify({
+            "status": "error",
+            "message": "A non-empty domain is required.",
+        }), 400
+
+    target = target.strip()
+
+    if len(target) > MAX_DOMAIN_LENGTH:
+        return jsonify({
+            "status": "error",
+            "message": (
+                f"The domain must not exceed "
+                f"{MAX_DOMAIN_LENGTH} characters."
+            ),
+        }), 400
+
+    try:
+        report = analyze_domain(target)
+        report_id = _cache_report(report)
+
+        try:
+            save_analysis(report, report_id=report_id)
+        except Exception:
+            app.logger.exception(
+                "Failed to persist mobile domain analysis report %s",
+                report_id,
+            )
+
+        return jsonify({
+            "status": "ok",
+            "report_id": report_id,
+            "report": report.to_dict(),
+        }), 200
+
+    except Exception:
+        app.logger.exception("Mobile domain analysis failed")
+
+        return jsonify({
+            "status": "error",
+            "message": "Unable to analyze the domain.",
+        }), 500
+
+
+@app.route("/api/analyze/attachment", methods=["POST"])
+def api_analyze_attachment():
+    uploaded_file = request.files.get("attachment_file")
+
+    if not uploaded_file or not uploaded_file.filename:
+        return jsonify({
+            "status": "error",
+            "message": "Choose a file to analyze.",
+        }), 400
+
+    if not _allowed_file(uploaded_file.filename, "attachment"):
+        return jsonify({
+            "status": "error",
+            "message": "This file type is blocked by the upload policy.",
+        }), 400
+
+    saved_path = None
+
+    try:
+        saved_path, original_name = _save_uploaded_file(uploaded_file)
+        app.logger.info(
+            "Starting mobile attachment analysis: %s",
+            original_name,
+        )
+
+        report = analyze_attachment(str(saved_path))
+        report.target = original_name
+        report_id = _cache_report(report)
+
+        try:
+            save_analysis(report, report_id=report_id)
+        except Exception:
+            app.logger.exception(
+                "Failed to persist mobile attachment report %s",
+                report_id,
+            )
+
+        return jsonify({
+            "status": "ok",
+            "report_id": report_id,
+            "report": report.to_dict(),
+        }), 200
+
+    except Exception:
+        app.logger.exception("Mobile attachment analysis failed")
+        return jsonify({
+            "status": "error",
+            "message": "Unable to analyze the attachment.",
+        }), 500
+
+    finally:
+        if saved_path:
+            _remove_file(saved_path)
+
 
 @app.route("/analyze/attachment", methods=["POST"])
 def analyze_attachment_route():
@@ -440,10 +628,6 @@ def analyze_attachment_route():
             _remove_file(saved_path)
 
 
-# ============================================================
-# DOMAIN ANALYSIS
-# ============================================================
-
 @app.route("/analyze/domain", methods=["POST"])
 def analyze_domain_route():
     target = request.form.get("domain", "").strip()
@@ -467,10 +651,6 @@ def analyze_domain_route():
     except Exception as exc:
         return _handle_analyzer_error("Domain", exc)
 
-
-# ============================================================
-# JSON REPORT EXPORT
-# ============================================================
 
 @app.route("/report/<report_id>/json")
 def download_report_json(report_id):
@@ -509,10 +689,6 @@ def download_report_json(report_id):
     return response
 
 
-# ============================================================
-# HEALTH CHECK
-# ============================================================
-
 @app.route("/health")
 def health():
     return jsonify({
@@ -520,10 +696,6 @@ def health():
         "service": "phishing-analysis-toolkit",
     })
 
-
-# ============================================================
-# INCIDENT RESPONSE AND THREAT INTELLIGENCE API
-# ============================================================
 
 @app.route("/api/irt/overview")
 def irt_overview():
@@ -672,10 +844,6 @@ def irt_update_case(case_id):
         }), 500
 
 
-# ============================================================
-# LOCAL DEVELOPMENT SERVER
-# ============================================================
-
 if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "5000"))
@@ -699,6 +867,7 @@ if __name__ == "__main__":
         f" Report cache: {CACHE_LIMIT}\n"
         f" Debug:        {debug}\n"
         " Dashboard:    Analyst Overview\n"
+        " Mobile API:   /api/analyze/url\n"
         " IRT API:      /api/irt/overview\n"
         " IRT Cases:    /api/irt/cases\n"
         "============================================================\n"
